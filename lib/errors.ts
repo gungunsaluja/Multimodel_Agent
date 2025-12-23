@@ -1,8 +1,3 @@
-/**
- * Custom error classes for better error handling
- * Provides structured error information and proper error types
- */
-
 export class AppError extends Error {
   constructor(
     message: string,
@@ -61,9 +56,6 @@ export class TimeoutError extends AppError {
   }
 }
 
-/**
- * Error response format for consistent API responses
- */
 export interface ErrorResponse {
   success: false;
   error: {
@@ -73,9 +65,6 @@ export interface ErrorResponse {
   };
 }
 
-/**
- * Create a standardized error response
- */
 export function createErrorResponse(error: AppError | Error, isProduction: boolean = false): ErrorResponse {
   if (error instanceof AppError) {
     return {

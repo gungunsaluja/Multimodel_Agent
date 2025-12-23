@@ -1,8 +1,3 @@
-/**
- * Input validation and sanitization utilities
- * Provides secure input validation following best practices
- */
-
 import { resolve, relative, normalize } from 'path';
 import { CONFIG } from './config';
 import { ValidationError } from './errors';
@@ -45,9 +40,6 @@ export function validateFilePath(filePath: string, workspaceRoot: string): strin
   return normalized;
 }
 
-/**
- * Validate agent ID
- */
 export function validateAgentId(agentId: unknown): AgentType {
   if (!agentId || typeof agentId !== 'string') {
     throw new ValidationError('Agent ID is required and must be a string');
@@ -63,11 +55,6 @@ export function validateAgentId(agentId: unknown): AgentType {
   return agentId as AgentType;
 }
 
-/**
- * Validate prompt input
- * @param prompt - The prompt to validate
- * @param allowEmpty - If true, allows empty prompts (useful when images are present)
- */
 export function validatePrompt(prompt: unknown, allowEmpty: boolean = false): string {
   if (prompt === undefined || prompt === null) {
     if (allowEmpty) {
@@ -99,9 +86,6 @@ export function validatePrompt(prompt: unknown, allowEmpty: boolean = false): st
   return trimmed;
 }
 
-/**
- * Validate request ID
- */
 export function validateRequestId(requestId: unknown): string {
   if (!requestId || typeof requestId !== 'string') {
     throw new ValidationError('Request ID is required and must be a string');
@@ -118,9 +102,6 @@ export function validateRequestId(requestId: unknown): string {
   return requestId;
 }
 
-/**
- * Sanitize file content
- */
 export function sanitizeFileContent(content: string, maxSize: number = CONFIG.FILE_SYSTEM.MAX_FILE_SIZE): string {
   if (typeof content !== 'string') {
     throw new ValidationError('File content must be a string');

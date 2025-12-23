@@ -9,9 +9,6 @@ import { logger } from '@/lib/logger';
 const PROJECT_ROOT = process.cwd();
 const WORKSPACE_ROOT = resolve(PROJECT_ROOT, CONFIG.FILE_SYSTEM.WORKSPACE_ROOT);
 
-/**
- * Validate file path and prevent path traversal attacks
- */
 function validateAndResolvePath(filePath: string): string {
   try {
     const validated = validateFilePath(filePath, WORKSPACE_ROOT);
@@ -24,9 +21,6 @@ function validateAndResolvePath(filePath: string): string {
   }
 }
 
-/**
- * Apply file changes (Keep button)
- */
 export async function POST(request: NextRequest) {
   try {
     let body: unknown;
@@ -48,7 +42,6 @@ export async function POST(request: NextRequest) {
       throw new ValidationError('File path is required and must be a string');
     }
 
-    // Normalize file path - remove ./workspace/ prefix if present
     let filePath: string = filePathRaw;
     if (filePath.startsWith('./workspace/')) {
       filePath = filePath.replace('./workspace/', '');
@@ -58,7 +51,6 @@ export async function POST(request: NextRequest) {
       filePath = filePath.replace('./', '');
     }
 
-    // Validate and resolve path
     const fullPath = validateAndResolvePath(filePath);
     
     logger.info('Applying file changes', { 
@@ -68,16 +60,13 @@ export async function POST(request: NextRequest) {
       contentLength: content ? String(content).length : 0 
     });
 
-    // Ensure parent directory exists
     const parentDir = dirname(fullPath);
     await fs.mkdir(parentDir, { recursive: true });
 
-    // Sanitize and validate content
     const sanitizedContent = content 
       ? sanitizeFileContent(String(content))
       : '';
 
-    // Write the file
     await fs.writeFile(fullPath, sanitizedContent, 'utf-8');
 
     logger.info('File changes applied', { filePath, size: sanitizedContent.length });
@@ -106,9 +95,6 @@ export async function POST(request: NextRequest) {
   }
 }
 
-/**
- * Reject file changes (Undo button) - restore old content
- */
 export async function PUT(request: NextRequest) {
   try {
     let body: unknown;
@@ -131,11 +117,8 @@ export async function PUT(request: NextRequest) {
     }
 
     const filePath: string = filePathRaw;
-
-    // Validate and resolve path
     const fullPath = validateAndResolvePath(filePath);
 
-    // If oldContent is empty and file exists, delete it
     if (!oldContent || (typeof oldContent === 'string' && oldContent.trim() === '')) {
       if (existsSync(fullPath)) {
         await fs.unlink(fullPath);
@@ -147,12 +130,10 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    // Sanitize and validate old content
     const sanitizedContent = oldContent 
       ? sanitizeFileContent(String(oldContent))
       : '';
 
-    // Restore old content
     const parentDir = dirname(fullPath);
     await fs.mkdir(parentDir, { recursive: true });
     await fs.writeFile(fullPath, sanitizedContent, 'utf-8');

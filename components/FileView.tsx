@@ -18,7 +18,6 @@ export default function FileView({ filePath, refreshKey }: FileViewProps) {
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastSavedContentRef = useRef<string>('');
 
-  // Load file content
   useEffect(() => {
     if (!filePath) {
       setContent('');
@@ -57,7 +56,6 @@ export default function FileView({ filePath, refreshKey }: FileViewProps) {
     loadFile();
   }, [filePath, refreshKey]);
 
-  // Auto-save function
   const saveFile = useCallback(async (contentToSave: string) => {
     if (!filePath || contentToSave === lastSavedContentRef.current) {
       return;
@@ -82,7 +80,6 @@ export default function FileView({ filePath, refreshKey }: FileViewProps) {
       if (response.ok && data.success) {
         lastSavedContentRef.current = contentToSave;
         setSaveStatus('saved');
-        // Clear saved status after 2 seconds
         setTimeout(() => {
           setSaveStatus(prev => prev === 'saved' ? null : prev);
         }, 2000);
@@ -98,23 +95,19 @@ export default function FileView({ filePath, refreshKey }: FileViewProps) {
     }
   }, [filePath]);
 
-  // Handle content changes with debounced auto-save
   const handleContentChange = (newContent: string) => {
     setContent(newContent);
     setSaveStatus('unsaved');
 
-    // Clear existing timeout
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
     }
 
-    // Set new timeout for auto-save (1 second delay)
     saveTimeoutRef.current = setTimeout(() => {
       saveFile(newContent);
     }, 1000);
   };
 
-  // Cleanup timeout on unmount
   useEffect(() => {
     return () => {
       if (saveTimeoutRef.current) {
@@ -123,7 +116,6 @@ export default function FileView({ filePath, refreshKey }: FileViewProps) {
     };
   }, []);
 
-  // Save on Ctrl+S or Cmd+S
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
@@ -159,7 +151,6 @@ export default function FileView({ filePath, refreshKey }: FileViewProps) {
     );
   }
 
-  // Determine file extension for syntax highlighting
   const getFileExtension = (path: string) => {
     const parts = path.split('.');
     return parts.length > 1 ? parts[parts.length - 1] : '';

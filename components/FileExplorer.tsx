@@ -86,7 +86,6 @@ export default function FileExplorer({
       newExpanded.delete(path);
     } else {
       newExpanded.add(path);
-      // Load children if not already loaded
       if (!loadedPaths.has(path)) {
         await loadFiles(path);
       }

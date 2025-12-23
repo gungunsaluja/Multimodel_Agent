@@ -1,8 +1,3 @@
-/**
- * Structured logging utility
- * Provides consistent logging with context and log levels
- */
-
 import { CONFIG } from './config';
 
 export enum LogLevel {

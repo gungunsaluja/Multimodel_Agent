@@ -15,10 +15,6 @@ if (!existsSync(WORKSPACE_ROOT)) {
   });
 }
 
-/**
- * Validate file path and prevent path traversal attacks
- * Uses proper path resolution instead of string comparison
- */
 function validateAndResolvePath(filePath: string): string {
   try {
     const validated = validateFilePath(filePath, WORKSPACE_ROOT);
@@ -202,9 +198,6 @@ export async function POST(request: NextRequest) {
   }
 }
 
-/**
- * Recursively delete all files and directories in a directory
- */
 async function clearDirectory(dirPath: string): Promise<void> {
   if (!existsSync(dirPath)) {
     return;
@@ -214,8 +207,6 @@ async function clearDirectory(dirPath: string): Promise<void> {
   
   for (const entry of entries) {
     const fullPath = resolve(dirPath, entry.name);
-    
-    // Ensure we're not going outside the workspace
     const relativeEntry = relative(WORKSPACE_ROOT, fullPath);
     if (relativeEntry.startsWith('..') || relativeEntry.includes('..')) {
       continue;
@@ -230,9 +221,6 @@ async function clearDirectory(dirPath: string): Promise<void> {
   }
 }
 
-/**
- * Clear workspace - DELETE all files and folders
- */
 export async function DELETE(request: NextRequest) {
   try {
     if (!existsSync(WORKSPACE_ROOT)) {

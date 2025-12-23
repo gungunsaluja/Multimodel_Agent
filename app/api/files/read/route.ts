@@ -9,9 +9,6 @@ import { logger } from '@/lib/logger';
 const PROJECT_ROOT = process.cwd();
 const WORKSPACE_ROOT = resolve(PROJECT_ROOT, CONFIG.FILE_SYSTEM.WORKSPACE_ROOT);
 
-/**
- * Validate file path and prevent path traversal attacks
- */
 function validateAndResolvePath(filePath: string): string {
   try {
     const validated = validateFilePath(filePath, WORKSPACE_ROOT);
@@ -33,10 +30,8 @@ export async function GET(request: NextRequest) {
       throw new ValidationError('Path is required');
     }
 
-    // Validate and resolve path
     const fullPath = validateAndResolvePath(path);
 
-    // Check if it's a file
     let stats;
     try {
       stats = await fs.stat(fullPath);
@@ -48,7 +43,6 @@ export async function GET(request: NextRequest) {
       throw new ValidationError('Path is a directory, not a file');
     }
 
-    // Check file size before reading
     if (stats.size > CONFIG.FILE_SYSTEM.MAX_FILE_SIZE) {
       throw new ValidationError(
         `File too large. Maximum size is ${CONFIG.FILE_SYSTEM.MAX_FILE_SIZE} bytes`,
@@ -56,7 +50,6 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Read file content
     const content = await fs.readFile(fullPath, 'utf-8');
 
     logger.info('File read', { path, size: content.length });

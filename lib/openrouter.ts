@@ -3,14 +3,10 @@ import { CONFIG } from './config';
 import { logger } from './logger';
 import { ExternalAPIError, TimeoutError } from './errors';
 
-/**
- * Model mappings for each agent
- * All models support vision/image processing
- */
 export const OPENROUTER_MODELS: Record<AgentType, string> = {
-  claude: 'anthropic/claude-sonnet-4', // Supports vision
-  gemini: 'google/gemini-3-flash-preview', // Supports vision - verified model ID
-  chatgpt: 'openai/gpt-5.2', // Supports vision (better than gpt-4)
+  claude: 'anthropic/claude-sonnet-4',
+  gemini: 'google/gemini-3-flash-preview',
+  chatgpt: 'openai/gpt-5.2',
 } as const;
 
 export type OpenRouterContent = 
@@ -30,15 +26,6 @@ export interface OpenRouterMessage {
   content: OpenRouterContent;
 }
 
-/**
- * Call OpenRouter API with proper error handling and timeouts
- * @param agentId - The agent identifier
- * @param messages - Array of messages to send
- * @param apiKey - OpenRouter API key
- * @returns ReadableStream of the response
- * @throws {ExternalAPIError} If the API call fails
- * @throws {TimeoutError} If the request times out
- */
 export async function callOpenRouter(
   agentId: AgentType,
   messages: OpenRouterMessage[],
@@ -159,11 +146,6 @@ export async function callOpenRouter(
   }
 }
 
-/**
- * Parse OpenRouter streaming response
- * @param stream - ReadableStream from OpenRouter API
- * @yields {string} Content chunks as they arrive
- */
 export async function* parseOpenRouterStream(
   stream: ReadableStream<Uint8Array>
 ): AsyncGenerator<string, void, unknown> {

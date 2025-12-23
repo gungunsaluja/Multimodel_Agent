@@ -15,9 +15,6 @@ if (!existsSync(WORKSPACE_ROOT)) {
   });
 }
 
-/**
- * Recursively get all files from a directory
- */
 async function getAllFiles(dirPath: string, basePath: string = '', fileList: Array<{ name: string; path: string }> = []): Promise<Array<{ name: string; path: string }>> {
   try {
     const entries = await fs.readdir(dirPath, { withFileTypes: true });
@@ -25,8 +22,6 @@ async function getAllFiles(dirPath: string, basePath: string = '', fileList: Arr
     for (const entry of entries) {
       const fullPath = resolve(dirPath, entry.name);
       const relativePath = basePath ? `${basePath}/${entry.name}` : entry.name;
-      
-      // Skip if outside workspace
       const relativeEntry = relative(WORKSPACE_ROOT, fullPath);
       if (relativeEntry.startsWith('..') || relativeEntry.includes('..')) {
         continue;
@@ -48,9 +43,6 @@ async function getAllFiles(dirPath: string, basePath: string = '', fileList: Arr
   return fileList;
 }
 
-/**
- * Search/list all files in workspace for autocomplete
- */
 export async function GET(request: NextRequest) {
   try {
     if (!existsSync(WORKSPACE_ROOT)) {
@@ -60,10 +52,8 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const query = searchParams.get('q') || '';
 
-    // Get all files recursively
     const allFiles = await getAllFiles(WORKSPACE_ROOT);
     
-    // Filter by query if provided
     const filteredFiles = query
       ? allFiles.filter(file => 
           file.name.toLowerCase().includes(query.toLowerCase()) ||
@@ -71,7 +61,6 @@ export async function GET(request: NextRequest) {
         )
       : allFiles;
 
-    // Sort by relevance (exact matches first, then by name)
     filteredFiles.sort((a, b) => {
       const aExact = a.name.toLowerCase() === query.toLowerCase() || a.path.toLowerCase() === query.toLowerCase();
       const bExact = b.name.toLowerCase() === query.toLowerCase() || b.path.toLowerCase() === query.toLowerCase();
@@ -82,7 +71,6 @@ export async function GET(request: NextRequest) {
       return a.name.localeCompare(b.name);
     });
 
-    // Limit results
     const limitedFiles = filteredFiles.slice(0, 50);
 
     return new Response(

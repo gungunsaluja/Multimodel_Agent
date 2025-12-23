@@ -30,8 +30,7 @@ export function parseFileOperations(
     const filePathHint = match[1]?.trim();
     const codeContent = match[2];
 
-    if (filePathHint && codeContent) {
-      // Extract file path from hint (could be in format "path/to/file.ts" or "// path/to/file.ts")
+      if (filePathHint && codeContent) {
       const filePath = filePathHint
         .replace(/^\/\/\s*/, '')
         .replace(/^file:\s*/, '')
@@ -48,8 +47,6 @@ export function parseFileOperations(
     }
   }
 
-  // Pattern 2: Explicit file operation markers
-  // Example: "Create file: path/to/file.ts\n```\ncontent\n```"
   const createPattern = /(?:create|new|add)\s+file[:\s]+([^\n]+)\n```[\s\S]*?```/gi;
   while ((match = createPattern.exec(content)) !== null) {
     const filePath = match[1].trim();
@@ -65,7 +62,6 @@ export function parseFileOperations(
     }
   }
 
-  // Pattern 3: "Edit file: path" followed by code block
   const editPattern = /(?:edit|update|modify|change)\s+file[:\s]+([^\n]+)\n```[\s\S]*?```/gi;
   while ((match = editPattern.exec(content)) !== null) {
     const filePath = match[1].trim();
@@ -84,33 +80,18 @@ export function parseFileOperations(
   return operations;
 }
 
-/**
- * Normalize file path to workspace-relative path
- */
 function normalizePath(filePath: string): string {
-  // Remove leading ./ or workspace/
   let normalized = filePath.replace(/^\.\//, '').replace(/^workspace\//, '');
-  
-  // Ensure it starts with ./
   if (!normalized.startsWith('./')) {
     normalized = './' + normalized;
   }
-  
   return normalized;
 }
 
-/**
- * Read existing file content if it exists
- * @param filePath - Relative file path from workspace root
- * @returns File content or null if file doesn't exist
- */
 export async function getFileContent(filePath: string): Promise<string | null> {
   try {
-    // Validate path to prevent traversal
     const validated = validateFilePath(filePath, WORKSPACE_ROOT);
     const fullPath = resolve(WORKSPACE_ROOT, validated);
-    
-    // Check file size before reading
     const stats = await fs.stat(fullPath);
     if (stats.size > CONFIG.FILE_SYSTEM.MAX_FILE_SIZE) {
       logger.warn('File too large to read', { filePath, size: stats.size });
@@ -120,7 +101,6 @@ export async function getFileContent(filePath: string): Promise<string | null> {
     const content = await fs.readFile(fullPath, 'utf-8');
     return content;
   } catch (error) {
-    // File doesn't exist or other error - return null silently
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
       return null;
     }
@@ -129,26 +109,13 @@ export async function getFileContent(filePath: string): Promise<string | null> {
   }
 }
 
-/**
- * Write file content (create or edit)
- * @param filePath - Relative file path from workspace root
- * @param content - File content to write
- * @returns Success status and message
- */
 export async function writeFile(filePath: string, content: string): Promise<{ success: boolean; message: string }> {
   try {
-    // Validate path to prevent traversal
     const validated = validateFilePath(filePath, WORKSPACE_ROOT);
     const fullPath = resolve(WORKSPACE_ROOT, validated);
-    
-    // Ensure parent directory exists
     const parentDir = dirname(fullPath);
     await fs.mkdir(parentDir, { recursive: true });
-    
-    // Sanitize and validate content
     const sanitizedContent = sanitizeFileContent(content);
-    
-    // Write the file
     await fs.writeFile(fullPath, sanitizedContent, 'utf-8');
     
     logger.info('File written', { filePath, size: sanitizedContent.length });

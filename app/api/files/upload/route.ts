@@ -15,9 +15,6 @@ if (!existsSync(WORKSPACE_ROOT)) {
   });
 }
 
-/**
- * Validate file path and prevent path traversal attacks
- */
 function validateAndResolvePath(filePath: string): string {
   try {
     const validated = validateFilePath(filePath, WORKSPACE_ROOT);
@@ -30,18 +27,12 @@ function validateAndResolvePath(filePath: string): string {
   }
 }
 
-/**
- * Recursively create directory structure
- */
 async function ensureDirectoryExists(dirPath: string): Promise<void> {
   if (!existsSync(dirPath)) {
     await fs.mkdir(dirPath, { recursive: true });
   }
 }
 
-/**
- * Recursively delete all files and directories in a directory
- */
 async function clearDirectory(dirPath: string): Promise<void> {
   if (!existsSync(dirPath)) {
     return;
@@ -51,8 +42,6 @@ async function clearDirectory(dirPath: string): Promise<void> {
   
   for (const entry of entries) {
     const fullPath = resolve(dirPath, entry.name);
-    
-    // Ensure we're not going outside the workspace
     const relativeEntry = relative(WORKSPACE_ROOT, fullPath);
     if (relativeEntry.startsWith('..') || relativeEntry.includes('..')) {
       continue;
@@ -67,9 +56,6 @@ async function clearDirectory(dirPath: string): Promise<void> {
   }
 }
 
-/**
- * Handle file upload
- */
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
@@ -101,28 +87,22 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // If uploading to root workspace, clear it first to replace old content
     if (normalizedTargetPath === './' || normalizedTargetPath === '' || targetDir === WORKSPACE_ROOT) {
       await clearDirectory(WORKSPACE_ROOT);
       logger.info('Workspace cleared before upload');
     }
 
-    // Ensure target directory exists
     await ensureDirectoryExists(targetDir);
 
     const uploadedFiles: string[] = [];
     const errors: string[] = [];
 
-    // Process each file
     for (const file of files) {
       try {
-        // Get relative path from file's webkitRelativePath if available (for folder uploads)
         let relativeFilePath = file.name;
         
-        // If webkitRelativePath exists, extract the relative path
         if ('webkitRelativePath' in file && file.webkitRelativePath) {
           const webkitPath = file.webkitRelativePath as string;
-          // Remove the first directory if it's the root folder name
           const pathParts = webkitPath.split('/');
           if (pathParts.length > 1) {
             relativeFilePath = pathParts.slice(1).join('/');
@@ -131,28 +111,23 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        // Construct full path
         const filePath = normalizedTargetPath === './' 
           ? relativeFilePath 
           : `${normalizedTargetPath}/${relativeFilePath}`.replace(/^\.\//, '');
 
         const fullPath = validateAndResolvePath(filePath);
 
-        // Check file size
         if (file.size > CONFIG.FILE_SYSTEM.MAX_FILE_SIZE) {
           errors.push(`${file.name}: File too large (max ${CONFIG.FILE_SYSTEM.MAX_FILE_SIZE} bytes)`);
           continue;
         }
 
-        // Ensure parent directory exists
         const parentDir = dirname(fullPath);
         await ensureDirectoryExists(parentDir);
 
-        // Read file content
         const arrayBuffer = await file.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
 
-        // Write file
         await fs.writeFile(fullPath, buffer);
         
         uploadedFiles.push(filePath);
