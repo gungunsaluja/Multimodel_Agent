@@ -41,14 +41,15 @@ export async function POST(request: NextRequest) {
     }
 
     const requestBody = body as Record<string, unknown>;
-    let filePath = requestBody.filePath;
+    const filePathRaw = requestBody.filePath;
     const content = requestBody.content;
 
-    if (!filePath || typeof filePath !== 'string') {
+    if (!filePathRaw || typeof filePathRaw !== 'string') {
       throw new ValidationError('File path is required and must be a string');
     }
 
     // Normalize file path - remove ./workspace/ prefix if present
+    let filePath: string = filePathRaw;
     if (filePath.startsWith('./workspace/')) {
       filePath = filePath.replace('./workspace/', '');
     } else if (filePath.startsWith('workspace/')) {
@@ -122,12 +123,14 @@ export async function PUT(request: NextRequest) {
     }
 
     const requestBody = body as Record<string, unknown>;
-    const filePath = requestBody.filePath;
+    const filePathRaw = requestBody.filePath;
     const oldContent = requestBody.oldContent;
 
-    if (!filePath || typeof filePath !== 'string') {
+    if (!filePathRaw || typeof filePathRaw !== 'string') {
       throw new ValidationError('File path is required and must be a string');
     }
+
+    const filePath: string = filePathRaw;
 
     // Validate and resolve path
     const fullPath = validateAndResolvePath(filePath);
