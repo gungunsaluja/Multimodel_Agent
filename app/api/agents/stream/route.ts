@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { AgentType } from '@/lib/types';
 import { callOpenRouter, parseOpenRouterStream, OpenRouterMessage, OPENROUTER_MODELS } from '@/lib/openrouter';
-import { parseFileOperations, getFileContent } from '@/lib/fileParser';
+import { parseFileOperations, getFileContent, writeFile } from '@/lib/fileParser';
 import { CONFIG } from '@/lib/config';
 import { ValidationError, createErrorResponse, AppError } from '@/lib/errors';
 import { validateAgentId, validatePrompt, validateRequestId } from '@/lib/validation';
@@ -10,17 +10,17 @@ import { logger } from '@/lib/logger';
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
 const agentSystemPrompts: Record<AgentType, string> = {
-  claude: `[AGENT_ID: CLAUDE_MISTRAL] You are Claude, a coding assistant powered by Mistral AI's Devstral-2512 model.
+  claude: `[AGENT_ID: CLAUDE] You are Claude, a coding assistant powered by Anthropic's Claude 3.5 Sonnet model.
 
 CRITICAL IDENTITY - YOU MUST FOLLOW THIS EXACTLY:
 - Your name is: Claude
-- Your model is: Mistral AI's Devstral-2512 (NOT Mistral-7B-Instruct, NOT Gemma, NOT Llama)
-- You are a French AI assistant with a direct, technical, no-nonsense approach
+- Your model is: Anthropic's Claude 3.5 Sonnet (NOT Mistral, NOT Gemma, NOT GPT)
+- You are an Anthropic AI assistant with a direct, technical, no-nonsense approach
 - You are NOT Gemini, NOT ChatGPT, NOT GPT-4
-- If asked "what is your model name", respond EXACTLY: "I'm Claude, powered by Mistral AI's Devstral-2512 model"
-- NEVER say you are powered by Google's Gemma or Meta's Llama
+- If asked "what is your model name", respond EXACTLY: "I'm Claude, powered by Anthropic's Claude 3.5 Sonnet model"
+- You support image processing and can analyze images, screenshots, diagrams, and visual content
 - ALWAYS start your responses with a brief, direct answer - NO generic greetings
-- Use a concise, technical, French-influenced tone
+- Use a concise, technical, professional tone
 - Focus on practical, efficient solutions with minimal fluff
 
 You can create, edit, and modify files in the workspace. When you want to create or edit a file, use this format:
@@ -43,15 +43,15 @@ updated code here
 The workspace is at ./workspace/ directory. All file paths should be relative to workspace (e.g., ./app/index.ts or app/index.ts).
 
 Be concise and action-oriented. Show complete file contents when creating or editing files.`,
-  gemini: `[AGENT_ID: GEMINI_GEMMA] You are Gemini, a coding assistant powered by Google's Gemma-3-27B-IT model.
+  gemini: `[AGENT_ID: GEMINI] You are Gemini, a coding assistant powered by Google's Gemini Pro Vision model.
 
 CRITICAL IDENTITY - YOU MUST FOLLOW THIS EXACTLY:
 - Your name is: Gemini
-- Your model is: Google's Gemma-3-27B-IT (NOT Gemma-2-2B-IT, NOT Mistral, NOT Llama)
+- Your model is: Google's Gemini Pro Vision (NOT Gemma, NOT Mistral, NOT GPT)
 - You are a Google AI assistant with an enthusiastic, creative, innovative approach
 - You are NOT Claude, NOT ChatGPT, NOT GPT-4
-- If asked "what is your model name", respond EXACTLY: "I'm Gemini, powered by Google's Gemma-3-27B-IT model"
-- NEVER say you are powered by Mistral's Devstral or Meta's Llama
+- If asked "what is your model name", respond EXACTLY: "I'm Gemini, powered by Google's Gemini Pro Vision model"
+- You support image processing and can analyze images, screenshots, diagrams, and visual content
 - ALWAYS start your responses with enthusiasm and creativity - NO generic greetings
 - Use an enthusiastic, creative, Google-style tone with emojis when appropriate
 - Suggest multiple approaches and innovative alternatives
@@ -76,15 +76,15 @@ updated code here
 The workspace is at ./workspace/ directory. All file paths should be relative to workspace (e.g., ./app/index.ts or app/index.ts).
 
 Be concise and action-oriented. Show complete file contents when creating or editing files.`,
-  chatgpt: `[AGENT_ID: CHATGPT_GPTOSS] You are ChatGPT, a coding assistant powered by OpenAI's GPT-OSS-20B model.
+  chatgpt: `[AGENT_ID: CHATGPT] You are ChatGPT, a coding assistant powered by OpenAI's GPT-4 Turbo model.
 
 CRITICAL IDENTITY - YOU MUST FOLLOW THIS EXACTLY:
 - Your name is: ChatGPT
-- Your model is: OpenAI's GPT-OSS-20B (NOT Llama-3.1-8B-Instruct, NOT Gemma, NOT Mistral)
+- Your model is: OpenAI's GPT-4 Turbo (NOT GPT-3.5, NOT Llama, NOT Gemma, NOT Mistral)
 - You are an OpenAI assistant with a clear, structured, step-by-step approach
-- You are NOT Claude, NOT Gemini, NOT GPT-4
-- If asked "what is your model name", respond EXACTLY: "I'm ChatGPT, powered by OpenAI's GPT-OSS-20B model"
-- NEVER say you are powered by Meta's Llama or Google's Gemma or Mistral's Devstral
+- You are NOT Claude, NOT Gemini, NOT GPT-3.5
+- If asked "what is your model name", respond EXACTLY: "I'm ChatGPT, powered by OpenAI's GPT-4 Turbo model"
+- You support image processing and can analyze images, screenshots, diagrams, and visual content
 - ALWAYS start your responses with a clear, structured answer - NO generic greetings
 - Use a clear, efficient, OpenAI-style tone
 - Provide step-by-step, implementable solutions with clear explanations
@@ -181,11 +181,13 @@ export async function POST(request: NextRequest) {
     agentId = requestBody.agentId as string | undefined;
     requestId = requestBody.requestId as string | undefined;
     const prompt = requestBody.prompt as unknown;
+    const images = requestBody.images as string[] | undefined;
 
     // Validate all inputs using validation utilities
     try {
       const validatedAgentId = validateAgentId(agentId);
-      const validatedPrompt = validatePrompt(prompt);
+      const hasImages = images && Array.isArray(images) && images.length > 0;
+      const validatedPrompt = validatePrompt(prompt, hasImages);
       const validatedRequestId = validateRequestId(requestId);
 
       agentId = validatedAgentId;
@@ -206,7 +208,8 @@ export async function POST(request: NextRequest) {
       }
 
       // Continue with validated inputs
-      return await processAgentRequest(validatedAgentId, validatedPrompt, validatedRequestId);
+      const validatedImages = images && Array.isArray(images) && images.length > 0 ? images : undefined;
+      return await processAgentRequest(validatedAgentId, validatedPrompt, validatedRequestId, validatedImages);
     } catch (error) {
       if (error instanceof ValidationError) {
         return sendSSEError(error, agentId, requestId);
@@ -233,11 +236,13 @@ export async function POST(request: NextRequest) {
 async function processAgentRequest(
   agentId: AgentType,
   prompt: string,
-  requestId: string
+  requestId: string,
+  images?: string[]
 ): Promise<Response> {
 
   const encoder = new TextEncoder();
   let isStreamActive = true;
+  const hasImages = images && images.length > 0;
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -250,14 +255,33 @@ async function processAgentRequest(
 
         const systemPrompt = agentSystemPrompts[agentId];
         const model = OPENROUTER_MODELS[agentId];
-
+        
         logger.info(`Agent [${agentId}] configuration`, {
           agentId,
           model,
           systemPromptPreview: systemPrompt.substring(0, 100) + '...',
           userPrompt: prompt.substring(0, 50) + '...',
+          hasImages,
+          imageCount: images?.length || 0,
           temperature: agentId === 'claude' ? 0.3 : agentId === 'gemini' ? 0.9 : 0.6,
+          note: hasImages ? 'Note: Free models may not support image input' : undefined,
         });
+        
+        let userContent: OpenRouterMessage['content'];
+        
+        if (hasImages) {
+          userContent = [
+            ...(prompt.trim() ? [{ type: 'text' as const, text: prompt }] : []),
+            ...images!.map(imageBase64 => ({
+              type: 'image_url' as const,
+              image_url: {
+                url: imageBase64,
+              },
+            })),
+          ];
+        } else {
+          userContent = prompt;
+        }
         
         const messages: OpenRouterMessage[] = [
           {
@@ -266,7 +290,7 @@ async function processAgentRequest(
           },
           {
             role: 'user',
-            content: prompt,
+            content: userContent,
           },
         ];
 
@@ -364,6 +388,23 @@ async function processAgentRequest(
                 const newContent = op.content || '';
 
                 if (op.type === 'create' || op.type === 'edit') {
+                  // Actually write the file
+                  try {
+                    await writeFile(op.filePath, newContent);
+                    logger.info(`File ${op.type === 'create' ? 'created' : 'edited'} by agent`, {
+                      agentId,
+                      filePath: op.filePath,
+                      size: newContent.length,
+                    });
+                  } catch (writeError: unknown) {
+                    logger.error('Error writing file from chat', writeError, {
+                      agentId,
+                      requestId,
+                      filePath: op.filePath,
+                    });
+                    // Continue to show the action even if write failed
+                  }
+
                   const fileEditAction = {
                     id: `action-${Date.now()}-${agentId}-file-${op.filePath}`,
                     agentId,
@@ -407,11 +448,16 @@ async function processAgentRequest(
           }
 
           if (isStreamActive) {
-            const errorMessage = error instanceof Error
+            let errorMessage = error instanceof Error
               ? error.message
               : 'Failed to process request';
+            
+            if (error instanceof Error && error.message.includes('image input')) {
+              errorMessage = `This model does not support image input. ${errorMessage}`;
+            }
 
-            logger.error(`Error processing agent ${agentId}`, error, { agentId, requestId });
+            const hasImages = images && images.length > 0;
+            logger.error(`Error processing agent ${agentId}`, error, { agentId, requestId, hasImages });
             
             controller.enqueue(
               encoder.encode(`data: ${JSON.stringify({ 

@@ -41,15 +41,31 @@ export async function POST(request: NextRequest) {
     }
 
     const requestBody = body as Record<string, unknown>;
-    const filePath = requestBody.filePath;
+    let filePath = requestBody.filePath;
     const content = requestBody.content;
 
     if (!filePath || typeof filePath !== 'string') {
       throw new ValidationError('File path is required and must be a string');
     }
 
+    // Normalize file path - remove ./workspace/ prefix if present
+    if (filePath.startsWith('./workspace/')) {
+      filePath = filePath.replace('./workspace/', '');
+    } else if (filePath.startsWith('workspace/')) {
+      filePath = filePath.replace('workspace/', '');
+    } else if (filePath.startsWith('./')) {
+      filePath = filePath.replace('./', '');
+    }
+
     // Validate and resolve path
     const fullPath = validateAndResolvePath(filePath);
+    
+    logger.info('Applying file changes', { 
+      originalPath: requestBody.filePath, 
+      normalizedPath: filePath, 
+      fullPath,
+      contentLength: content ? String(content).length : 0 
+    });
 
     // Ensure parent directory exists
     const parentDir = dirname(fullPath);

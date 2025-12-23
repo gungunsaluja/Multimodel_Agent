@@ -24,22 +24,31 @@ body {
   }
 }
 
-/* Custom scrollbar */
+/* Custom scrollbar - Modern dark theme */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #f1f1f1;
+  background: #1f2937;
+  border-radius: 5px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #888;
-  border-radius: 4px;
+  background: #4b5563;
+  border-radius: 5px;
+  border: 2px solid #1f2937;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #555;
+  background: #6b7280;
+}
+
+/* Smooth transitions */
+* {
+  transition-property: color, background-color, border-color, opacity, transform;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
 }
 

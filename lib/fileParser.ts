@@ -1,9 +1,10 @@
 import { AgentType } from './types';
 import { promises as fs } from 'fs';
-import { resolve } from 'path';
+import { resolve, dirname } from 'path';
 import { CONFIG } from './config';
-import { validateFilePath } from './validation';
+import { validateFilePath, sanitizeFileContent } from './validation';
 import { logger } from './logger';
+import { ValidationError } from './errors';
 
 const WORKSPACE_ROOT = resolve(process.cwd(), CONFIG.FILE_SYSTEM.WORKSPACE_ROOT);
 
@@ -14,18 +15,14 @@ export interface ParsedFileOperation {
   oldContent?: string;
 }
 
-/**
- * Parse agent response to extract file operations
- * Looks for code blocks with file paths and content
- */
+
 export function parseFileOperations(
   content: string,
   agentId: AgentType
 ): ParsedFileOperation[] {
   const operations: ParsedFileOperation[] = [];
 
-  // Pattern 1: Code blocks with file paths in comments or headers
-  // Example: ```typescript:src/file.ts\n...code...\n```
+ 
   const codeBlockPattern = /```(?:\w+)?:?([^\n]+)?\n([\s\S]*?)```/g;
   let match;
 
@@ -129,6 +126,41 @@ export async function getFileContent(filePath: string): Promise<string | null> {
     }
     logger.warn('Error reading file', { filePath, error });
     return null;
+  }
+}
+
+/**
+ * Write file content (create or edit)
+ * @param filePath - Relative file path from workspace root
+ * @param content - File content to write
+ * @returns Success status and message
+ */
+export async function writeFile(filePath: string, content: string): Promise<{ success: boolean; message: string }> {
+  try {
+    // Validate path to prevent traversal
+    const validated = validateFilePath(filePath, WORKSPACE_ROOT);
+    const fullPath = resolve(WORKSPACE_ROOT, validated);
+    
+    // Ensure parent directory exists
+    const parentDir = dirname(fullPath);
+    await fs.mkdir(parentDir, { recursive: true });
+    
+    // Sanitize and validate content
+    const sanitizedContent = sanitizeFileContent(content);
+    
+    // Write the file
+    await fs.writeFile(fullPath, sanitizedContent, 'utf-8');
+    
+    logger.info('File written', { filePath, size: sanitizedContent.length });
+    
+    return { success: true, message: 'File written successfully' };
+  } catch (error) {
+    if (error instanceof ValidationError) {
+      logger.error('Validation error writing file', { filePath, error });
+      throw error;
+    }
+    logger.error('Error writing file', { filePath, error });
+    throw new Error(`Failed to write file: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
 

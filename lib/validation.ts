@@ -8,23 +8,23 @@ import { CONFIG } from './config';
 import { ValidationError } from './errors';
 import { AgentType } from './types';
 
-/**
- * Validate and sanitize file path
- * Prevents path traversal attacks
- */
+
 export function validateFilePath(filePath: string, workspaceRoot: string): string {
   if (!filePath || typeof filePath !== 'string') {
     throw new ValidationError('File path is required and must be a string');
   }
 
-  // Normalize the path
-  const normalized = normalize(filePath.replace(/^\.\//, '').replace(/^workspace\//, ''));
+  let normalized = filePath.replace(/^\.\//, '');
   
-  // Resolve to absolute path
+  if (normalized === 'workspace' || normalized.startsWith('workspace/')) {
+    normalized = normalized === 'workspace' ? '' : normalized.substring('workspace/'.length);
+  }
+  
+  normalized = normalize(normalized);
+  
   const resolvedPath = resolve(workspaceRoot, normalized);
   const resolvedRoot = resolve(workspaceRoot);
   
-  // Check if path is within workspace
   const relativePath = relative(resolvedRoot, resolvedPath);
   
   if (relativePath.startsWith('..') || relativePath.includes('..')) {
@@ -33,12 +33,10 @@ export function validateFilePath(filePath: string, workspaceRoot: string): strin
     });
   }
 
-  // Check path length
   if (normalized.length > 260) {
     throw new ValidationError('File path too long (max 260 characters)');
   }
 
-  // Check for dangerous characters
   const dangerousChars = /[<>:"|?*\x00-\x1f]/;
   if (dangerousChars.test(normalized)) {
     throw new ValidationError('File path contains invalid characters');
@@ -67,15 +65,24 @@ export function validateAgentId(agentId: unknown): AgentType {
 
 /**
  * Validate prompt input
+ * @param prompt - The prompt to validate
+ * @param allowEmpty - If true, allows empty prompts (useful when images are present)
  */
-export function validatePrompt(prompt: unknown): string {
-  if (!prompt || typeof prompt !== 'string') {
+export function validatePrompt(prompt: unknown, allowEmpty: boolean = false): string {
+  if (prompt === undefined || prompt === null) {
+    if (allowEmpty) {
+      return '';
+    }
     throw new ValidationError('Prompt is required and must be a string');
+  }
+
+  if (typeof prompt !== 'string') {
+    throw new ValidationError('Prompt must be a string');
   }
 
   const trimmed = prompt.trim();
 
-  if (trimmed.length < CONFIG.API.MIN_PROMPT_LENGTH) {
+  if (!allowEmpty && trimmed.length < CONFIG.API.MIN_PROMPT_LENGTH) {
     throw new ValidationError(
       `Prompt must be at least ${CONFIG.API.MIN_PROMPT_LENGTH} character(s)`,
       { length: trimmed.length }
@@ -100,7 +107,6 @@ export function validateRequestId(requestId: unknown): string {
     throw new ValidationError('Request ID is required and must be a string');
   }
 
-  // Request ID should be alphanumeric with dashes/underscores
   if (!/^[a-zA-Z0-9_-]+$/.test(requestId)) {
     throw new ValidationError('Request ID contains invalid characters');
   }
@@ -120,7 +126,6 @@ export function sanitizeFileContent(content: string, maxSize: number = CONFIG.FI
     throw new ValidationError('File content must be a string');
   }
 
-  // Check size (approximate - UTF-8 encoding)
   const sizeBytes = new TextEncoder().encode(content).length;
   if (sizeBytes > maxSize) {
     throw new ValidationError(
@@ -129,7 +134,5 @@ export function sanitizeFileContent(content: string, maxSize: number = CONFIG.FI
     );
   }
 
-  // Remove null bytes
   return content.replace(/\0/g, '');
 }
-

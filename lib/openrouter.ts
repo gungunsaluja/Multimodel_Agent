@@ -5,16 +5,29 @@ import { ExternalAPIError, TimeoutError } from './errors';
 
 /**
  * Model mappings for each agent
+ * All models support vision/image processing
  */
 export const OPENROUTER_MODELS: Record<AgentType, string> = {
-  claude:  "mistralai/devstral-2512:free",
-  gemini:  "google/gemma-3-27b-it:free",
-  chatgpt: "openai/gpt-oss-20b:free",
+  claude: 'anthropic/claude-sonnet-4', // Supports vision
+  gemini: 'google/gemini-3-flash-preview', // Supports vision - verified model ID
+  chatgpt: 'openai/gpt-5.2', // Supports vision (better than gpt-4)
 } as const;
+
+export type OpenRouterContent = 
+  | string
+  | Array<{
+      type: 'text';
+      text: string;
+    } | {
+      type: 'image_url';
+      image_url: {
+        url: string;
+      };
+    }>;
 
 export interface OpenRouterMessage {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  content: OpenRouterContent;
 }
 
 /**
@@ -43,6 +56,19 @@ export async function callOpenRouter(
     throw new Error('Each agent must use a different model');
   }
   
+  const hasImages = messages.some(msg => 
+    Array.isArray(msg.content) && 
+    msg.content.some(item => item.type === 'image_url')
+  );
+
+  if (hasImages) {
+    logger.info('Images detected - using vision-capable model', {
+      agentId,
+      model,
+      note: 'All models support vision/image processing.',
+    });
+  }
+  
   const requestBody = {
     model,
     messages,
@@ -56,9 +82,9 @@ export async function callOpenRouter(
     model,
     temperature: CONFIG.AGENTS.TEMPERATURE[agentId],
     messageCount: messages.length,
+    hasImages,
   });
 
-  // Create AbortController for timeout
   const controller = new AbortController();
   const timeoutId = setTimeout(() => {
     controller.abort();
@@ -88,6 +114,10 @@ export async function callOpenRouter(
         const errorJson = JSON.parse(errorText);
         errorMessage = errorJson.error?.message || errorJson.message || errorText;
         errorDetails = { ...errorDetails, ...errorJson };
+        
+        if (hasImages && (errorMessage.includes('image input') || errorMessage.includes('vision') || response.status === 404)) {
+          errorMessage = `This model (${model}) does not support image input. Please use text-only prompts or switch to a vision-capable model.`;
+        }
       } catch {
         errorMessage = errorText || errorMessage;
       }
@@ -97,6 +127,7 @@ export async function callOpenRouter(
         model,
         status: response.status,
         details: errorDetails,
+        hasImages,
       });
 
       throw new ExternalAPIError(errorMessage, 'OpenRouter');
@@ -167,7 +198,6 @@ export async function* parseOpenRouterStream(
                 yield content;
               }
             } catch (error) {
-              // Skip invalid JSON - might be empty or malformed
               logger.warn('Failed to parse OpenRouter stream chunk', {
                 data: data.substring(0, 100),
                 error: error instanceof Error ? error.message : String(error),
@@ -181,4 +211,3 @@ export async function* parseOpenRouterStream(
     reader.releaseLock();
   }
 }
-

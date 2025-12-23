@@ -9,7 +9,6 @@ import { logger } from '@/lib/logger';
 const PROJECT_ROOT = process.cwd();
 const WORKSPACE_ROOT = resolve(PROJECT_ROOT, CONFIG.FILE_SYSTEM.WORKSPACE_ROOT);
 
-// Ensure workspace directory exists
 if (!existsSync(WORKSPACE_ROOT)) {
   fs.mkdir(WORKSPACE_ROOT, { recursive: true }).catch((error) => {
     logger.error('Failed to create workspace directory', error);
@@ -34,13 +33,32 @@ function validateAndResolvePath(filePath: string): string {
 
 export async function GET(request: NextRequest) {
   try {
+    if (!existsSync(WORKSPACE_ROOT)) {
+      await fs.mkdir(WORKSPACE_ROOT, { recursive: true });
+    }
+
     const searchParams = request.nextUrl.searchParams;
-    const pathParam = searchParams.get('path') || './';
+    let pathParam = searchParams.get('path') || './';
 
-    // Validate and resolve path
-    const fullPath = validateAndResolvePath(pathParam);
+    if (pathParam === './workspace' || pathParam === 'workspace' || pathParam.startsWith('./workspace/')) {
+      pathParam = pathParam.replace(/^\.\/workspace\/?/, './').replace(/^workspace\/?/, './');
+    }
 
-    // Ensure directory exists
+    if (pathParam === './' || pathParam === '' || pathParam === 'workspace') {
+      pathParam = './';
+    }
+
+    let fullPath: string;
+    try {
+      fullPath = validateAndResolvePath(pathParam);
+    } catch (error) {
+      if (pathParam === './' || pathParam === '') {
+        fullPath = WORKSPACE_ROOT;
+      } else {
+        throw error;
+      }
+    }
+
     try {
       const stats = await fs.stat(fullPath);
       if (!stats.isDirectory()) {
@@ -50,18 +68,27 @@ export async function GET(request: NextRequest) {
       if (error instanceof ValidationError) {
         throw error;
       }
-      throw new NotFoundError('Directory');
+      if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+        try {
+          await fs.mkdir(fullPath, { recursive: true });
+          logger.info('Created directory', { path: fullPath, requestedPath: pathParam });
+        } catch (mkdirError) {
+          logger.error('Failed to create directory', { path: fullPath, error: mkdirError });
+          throw new NotFoundError('Directory');
+        }
+      } else {
+        logger.error('Error checking directory', { path: fullPath, error });
+        throw new NotFoundError('Directory');
+      }
     }
 
     const entries = await fs.readdir(fullPath, { withFileTypes: true });
 
     const files = await Promise.all(
       entries.map(async (entry) => {
-        // Validate each entry path
         const entryPath = pathParam === './' ? entry.name : `${pathParam}/${entry.name}`;
         const entryFullPath = resolve(WORKSPACE_ROOT, entryPath.startsWith('./') ? entryPath.slice(2) : entryPath);
         
-        // Double-check entry is within workspace
         const relativeEntry = relative(WORKSPACE_ROOT, entryFullPath);
         if (relativeEntry.startsWith('..') || relativeEntry.includes('..')) {
           logger.warn('Skipping entry outside workspace', { entryPath, relativeEntry });
@@ -76,7 +103,6 @@ export async function GET(request: NextRequest) {
       })
     );
 
-    // Filter out null entries and sort: directories first, then files
     const validFiles = files.filter((f): f is NonNullable<typeof f> => f !== null);
     validFiles.sort((a, b) => {
       if (a.type !== b.type) {
@@ -135,23 +161,19 @@ export async function POST(request: NextRequest) {
       throw new ValidationError('Type must be either "file" or "directory"');
     }
 
-    // Validate and resolve path
     const fullPath = validateAndResolvePath(path);
 
     if (type === 'directory') {
       await fs.mkdir(fullPath, { recursive: true });
       logger.info('Directory created', { path });
     } else if (type === 'file') {
-      // Ensure parent directory exists
       const parentDir = resolve(fullPath, '..');
       await fs.mkdir(parentDir, { recursive: true });
       
-      // Sanitize and validate content
       const sanitizedContent = content 
         ? sanitizeFileContent(String(content))
         : '';
       
-      // Write the file
       await fs.writeFile(fullPath, sanitizedContent, 'utf-8');
       logger.info('File created', { path, size: sanitizedContent.length });
     }
@@ -180,3 +202,70 @@ export async function POST(request: NextRequest) {
   }
 }
 
+/**
+ * Recursively delete all files and directories in a directory
+ */
+async function clearDirectory(dirPath: string): Promise<void> {
+  if (!existsSync(dirPath)) {
+    return;
+  }
+
+  const entries = await fs.readdir(dirPath, { withFileTypes: true });
+  
+  for (const entry of entries) {
+    const fullPath = resolve(dirPath, entry.name);
+    
+    // Ensure we're not going outside the workspace
+    const relativeEntry = relative(WORKSPACE_ROOT, fullPath);
+    if (relativeEntry.startsWith('..') || relativeEntry.includes('..')) {
+      continue;
+    }
+    
+    if (entry.isDirectory()) {
+      await clearDirectory(fullPath);
+      await fs.rmdir(fullPath);
+    } else {
+      await fs.unlink(fullPath);
+    }
+  }
+}
+
+/**
+ * Clear workspace - DELETE all files and folders
+ */
+export async function DELETE(request: NextRequest) {
+  try {
+    if (!existsSync(WORKSPACE_ROOT)) {
+      await fs.mkdir(WORKSPACE_ROOT, { recursive: true });
+      return new Response(
+        JSON.stringify({ success: true, message: 'Workspace is already empty' }),
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    await clearDirectory(WORKSPACE_ROOT);
+    logger.info('Workspace cleared');
+
+    return new Response(
+      JSON.stringify({ success: true, message: 'Workspace cleared successfully' }),
+      { headers: { 'Content-Type': 'application/json' } }
+    );
+  } catch (error) {
+    logger.error('Error in DELETE /api/files', error);
+    const errorResponse = createErrorResponse(
+      error instanceof ValidationError
+        ? error
+        : new Error('Failed to clear workspace'),
+      CONFIG.ENV.IS_PRODUCTION
+    );
+    
+    const statusCode = error instanceof ValidationError
+      ? error.statusCode
+      : 500;
+
+    return new Response(
+      JSON.stringify(errorResponse),
+      { status: statusCode, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+}

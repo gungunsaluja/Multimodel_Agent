@@ -8,32 +8,243 @@ import AgentPanel from '@/components/AgentPanel';
 import BottomInputBar from '@/components/BottomInputBar';
 import ResizableDivider from '@/components/ResizableDivider';
 import { AgentType, AgentAction, FileDiff } from '@/lib/types';
-import { AGENTS } from '@/lib/agents';
 import { computeDiff } from '@/lib/diffUtils';
-
 export default function Home() {
   const [selectedAgents] = useState<AgentType[]>(['claude', 'gemini', 'chatgpt']);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [fileRefreshKey, setFileRefreshKey] = useState(0);
 
   const [fileExplorerPercent, setFileExplorerPercent] = useState(10);
   const [fileViewPercent, setFileViewPercent] = useState(30);
-  const [agentPanel1Percent, setAgentPanel1Percent] = useState(20);
-  const [agentPanel2Percent, setAgentPanel2Percent] = useState(20);
-  const [agentPanel3Percent, setAgentPanel3Percent] = useState(20);
+  const [agentPanel1Width, setAgentPanel1Width] = useState(400);
+  const [agentPanel2Width, setAgentPanel2Width] = useState(400);
+  const [agentPanel3Width, setAgentPanel3Width] = useState(400);
 
   interface ConversationTurn {
     id: string;
     prompt: string;
     timestamp: number;
     actions: AgentAction[];
-    status: 'streaming' | 'error' | 'completed';
+    status: 'streaming' | 'error' | 'completed' | 'paused';
     error?: string;
   }
+
+  const STORAGE_KEY = 'multi-agent-conversations';
+
+  const loadFromStorage = (): Record<AgentType, {
+    conversations: ConversationTurn[];
+    fileDiffs: FileDiff[];
+    currentStatus: 'idle' | 'streaming' | 'error' | 'completed' | 'paused';
+    currentError?: string;
+  }> => {
+    if (typeof window === 'undefined') {
+      return {
+        claude: { conversations: [], fileDiffs: [], currentStatus: 'idle' },
+        gemini: { conversations: [], fileDiffs: [], currentStatus: 'idle' },
+        chatgpt: { conversations: [], fileDiffs: [], currentStatus: 'idle' },
+      };
+    }
+
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        
+        const validateConversation = (c: any): c is ConversationTurn => {
+          return c && 
+                 typeof c.id === 'string' &&
+                 typeof c.prompt === 'string' &&
+                 typeof c.timestamp === 'number' &&
+                 Array.isArray(c.actions) &&
+                 (c.status === 'completed' || c.status === 'error' || c.status === 'streaming' || c.status === 'paused');
+        };
+        
+        const validateFileDiff = (f: any): f is FileDiff => {
+          return f &&
+                 typeof f.filePath === 'string' &&
+                 typeof f.oldContent === 'string' &&
+                 typeof f.newContent === 'string';
+        };
+        
+        const loaded = {
+          claude: {
+            conversations: Array.isArray(parsed.claude?.conversations) 
+              ? parsed.claude.conversations.filter(validateConversation)
+              : [],
+            fileDiffs: Array.isArray(parsed.claude?.fileDiffs)
+              ? parsed.claude.fileDiffs.filter(validateFileDiff)
+              : [],
+            currentStatus: 'idle' as const,
+            currentError: undefined,
+          },
+          gemini: {
+            conversations: Array.isArray(parsed.gemini?.conversations)
+              ? parsed.gemini.conversations.filter(validateConversation)
+              : [],
+            fileDiffs: Array.isArray(parsed.gemini?.fileDiffs)
+              ? parsed.gemini.fileDiffs.filter(validateFileDiff)
+              : [],
+            currentStatus: 'idle' as const,
+            currentError: undefined,
+          },
+          chatgpt: {
+            conversations: Array.isArray(parsed.chatgpt?.conversations)
+              ? parsed.chatgpt.conversations.filter(validateConversation)
+              : [],
+            fileDiffs: Array.isArray(parsed.chatgpt?.fileDiffs)
+              ? parsed.chatgpt.fileDiffs.filter(validateFileDiff)
+              : [],
+            currentStatus: 'idle' as const,
+            currentError: undefined,
+          },
+        };
+        
+        const totalConversations = loaded.claude.conversations.length + 
+                                   loaded.gemini.conversations.length + 
+                                   loaded.chatgpt.conversations.length;
+        
+        console.log('[LOCALSTORAGE] Loaded conversations:', {
+          claude: loaded.claude.conversations.length,
+          gemini: loaded.gemini.conversations.length,
+          chatgpt: loaded.chatgpt.conversations.length,
+          total: totalConversations,
+        });
+        
+        if (totalConversations > 0) {
+          console.log('[LOCALSTORAGE] Sample conversation IDs:', {
+            claude: loaded.claude.conversations[0]?.id,
+            gemini: loaded.gemini.conversations[0]?.id,
+            chatgpt: loaded.chatgpt.conversations[0]?.id,
+          });
+        }
+        
+        return loaded;
+      } else {
+        console.log('[LOCALSTORAGE] No stored data found');
+      }
+    } catch (error) {
+      console.error('[LOCALSTORAGE] Error loading from localStorage:', error);
+      if (error instanceof SyntaxError) {
+        console.warn('[LOCALSTORAGE] Corrupted data detected, clearing storage');
+        try {
+          localStorage.removeItem(STORAGE_KEY);
+        } catch (clearError) {
+          console.error('[LOCALSTORAGE] Failed to clear corrupted data:', clearError);
+        }
+      }
+    }
+
+    return {
+      claude: { conversations: [], fileDiffs: [], currentStatus: 'idle' },
+      gemini: { conversations: [], fileDiffs: [], currentStatus: 'idle' },
+      chatgpt: { conversations: [], fileDiffs: [], currentStatus: 'idle' },
+    };
+  };
+
+  const saveToStorage = (states: Record<AgentType, {
+    conversations: ConversationTurn[];
+    fileDiffs: FileDiff[];
+    currentStatus: 'idle' | 'streaming' | 'error' | 'completed' | 'paused';
+    currentError?: string;
+  }>) => {
+    if (typeof window === 'undefined') return;
+
+    try {
+      const shouldSaveConversation = (c: ConversationTurn): boolean => {
+        if (c.status === 'completed' || c.status === 'error' || c.status === 'paused') {
+          return true;
+        }
+        if (c.status === 'streaming' && c.actions.length > 0) {
+          const hasContent = c.actions.some(a => 
+            a.content && a.content.trim().length > 0
+          );
+          return hasContent;
+        }
+        return false;
+      };
+
+      const toSave = {
+        claude: {
+          conversations: states.claude.conversations
+            .filter(shouldSaveConversation)
+            .map(c => ({
+              ...c,
+              status: c.status === 'streaming' ? 'completed' as const : c.status,
+            })),
+          fileDiffs: states.claude.fileDiffs,
+        },
+        gemini: {
+          conversations: states.gemini.conversations
+            .filter(shouldSaveConversation)
+            .map(c => ({
+              ...c,
+              status: c.status === 'streaming' ? 'completed' as const : c.status,
+            })),
+          fileDiffs: states.gemini.fileDiffs,
+        },
+        chatgpt: {
+          conversations: states.chatgpt.conversations
+            .filter(shouldSaveConversation)
+            .map(c => ({
+              ...c,
+              status: c.status === 'streaming' ? 'completed' as const : c.status,
+            })),
+          fileDiffs: states.chatgpt.fileDiffs,
+        },
+      };
+
+      const hasData = toSave.claude.conversations.length > 0 || 
+                      toSave.gemini.conversations.length > 0 || 
+                      toSave.chatgpt.conversations.length > 0 ||
+                      toSave.claude.fileDiffs.length > 0 ||
+                      toSave.gemini.fileDiffs.length > 0 ||
+                      toSave.chatgpt.fileDiffs.length > 0;
+
+      if (hasData) {
+        const serialized = JSON.stringify(toSave);
+        localStorage.setItem(STORAGE_KEY, serialized);
+        console.log('[LOCALSTORAGE] Saved conversations:', {
+          claude: toSave.claude.conversations.length,
+          gemini: toSave.gemini.conversations.length,
+          chatgpt: toSave.chatgpt.conversations.length,
+          totalSize: serialized.length,
+        });
+      } else {
+        localStorage.removeItem(STORAGE_KEY);
+        console.log('[LOCALSTORAGE] No data to save, removed from storage');
+      }
+    } catch (error) {
+      console.error('[LOCALSTORAGE] Error saving to localStorage:', error);
+      if (error instanceof Error && error.name === 'QuotaExceededError') {
+        console.warn('[LOCALSTORAGE] Quota exceeded. Consider clearing old data.');
+        try {
+          const oldestConversations = Object.values(states).flatMap(s => s.conversations)
+            .sort((a, b) => a.timestamp - b.timestamp)
+            .slice(0, Math.floor(Object.values(states).flatMap(s => s.conversations).length / 2));
+          
+          const trimmedStates = { ...states };
+          Object.keys(trimmedStates).forEach(agentId => {
+            const agentState = trimmedStates[agentId as AgentType];
+            trimmedStates[agentId as AgentType] = {
+              ...agentState,
+              conversations: agentState.conversations.filter(
+                c => !oldestConversations.some(old => old.id === c.id)
+              ),
+            };
+          });
+          
+          saveToStorage(trimmedStates);
+        } catch (retryError) {
+          console.error('[LOCALSTORAGE] Failed to trim and retry save:', retryError);
+        }
+      }
+    }
+  };
 
   const [agentStates, setAgentStates] = useState<Record<AgentType, {
     conversations: ConversationTurn[];
     fileDiffs: FileDiff[];
-    currentStatus: 'idle' | 'streaming' | 'error' | 'completed';
+    currentStatus: 'idle' | 'streaming' | 'error' | 'completed' | 'paused';
     currentError?: string;
   }>>({
     claude: { conversations: [], fileDiffs: [], currentStatus: 'idle' },
@@ -41,9 +252,12 @@ export default function Home() {
     chatgpt: { conversations: [], fileDiffs: [], currentStatus: 'idle' },
   });
 
+  const [isHydrated, setIsHydrated] = useState(false);
+
   const [currentPrompt, setCurrentPrompt] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
+  const [isConnected, setIsConnected] = useState(true);
 
   const abortControllersRef = useRef<Record<AgentType, AbortController | null>>({
     claude: null,
@@ -62,15 +276,57 @@ export default function Home() {
     status?: 'streaming' | 'completed' | 'error' | 'paused';
   }
 
+  const agentStatesRef = useRef(agentStates);
+
   useEffect(() => {
+    setIsHydrated(true);
+    const loaded = loadFromStorage();
+    setAgentStates(loaded);
+    agentStatesRef.current = loaded;
+  }, []);
+
+  useEffect(() => {
+    agentStatesRef.current = agentStates;
+  }, [agentStates]);
+
+
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      saveToStorage(agentStatesRef.current);
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.hidden && isHydrated) {
+        saveToStorage(agentStatesRef.current);
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (isHydrated) {
+        saveToStorage(agentStatesRef.current);
+      }
       Object.values(abortControllersRef.current).forEach(controller => {
         if (controller) {
           controller.abort();
         }
       });
     };
-  }, []);
+  }, [isHydrated]);
+
+  useEffect(() => {
+    if (!isHydrated) return;
+    
+    const timeoutId = setTimeout(() => {
+      saveToStorage(agentStates);
+    }, 200);
+
+    return () => clearTimeout(timeoutId);
+  }, [agentStates, isHydrated]);
 
   /**
    * Handle SSE messages from the server
@@ -138,8 +394,6 @@ export default function Home() {
               newActions = [...c.actions, actionWithAgentId];
             }
             
-            console.log(`[ACTION UPDATE] Agent: ${agentId}, Conversation ID: ${c.id}, Action ID: ${actionWithAgentId.id}, Content length: ${actionWithAgentId.content?.length || 0}, Total actions: ${newActions.length}`);
-            
             return {
               ...c,
               actions: newActions
@@ -183,7 +437,7 @@ export default function Home() {
           }
         }
 
-        return {
+        const updated = {
           ...prev,
           [agentId]: {
             conversations,
@@ -192,6 +446,15 @@ export default function Home() {
             currentError: agentState.currentError,
           },
         };
+        
+        if (isHydrated && action.content && action.content.trim().length > 100) {
+          setTimeout(() => {
+            agentStatesRef.current = updated;
+            saveToStorage(updated);
+          }, 100);
+        }
+        
+        return updated;
       });
       return;
     }
@@ -205,7 +468,7 @@ export default function Home() {
             ? { ...c, status: 'error' as const, error: message.error || 'An error occurred', actions: [...c.actions] }
             : { ...c, actions: [...c.actions] }
         );
-        return {
+        const updated = {
           ...prev,
           [message.agentId!]: {
             conversations,
@@ -214,6 +477,13 @@ export default function Home() {
             currentError: message.error || 'An error occurred',
           },
         };
+        
+        if (isHydrated) {
+          agentStatesRef.current = updated;
+          saveToStorage(updated);
+        }
+        
+        return updated;
       });
       return;
     }
@@ -245,13 +515,18 @@ export default function Home() {
           setIsLoading(false);
         }
         
+        if (isHydrated) {
+          agentStatesRef.current = updated;
+          saveToStorage(updated);
+        }
+        
         return updated;
       });
       return;
     }
   };
 
-  const handlePromptSubmit = async (prompt: string) => {
+  const handlePromptSubmit = async (prompt: string, images?: File[]) => {
     setCurrentPrompt(prompt);
     setIsLoading(true);
     setIsPaused(false);
@@ -263,11 +538,6 @@ export default function Home() {
       const claudeId = `${requestIdRef.current}-claude`;
       const geminiId = `${requestIdRef.current}-gemini`;
       const chatgptId = `${requestIdRef.current}-chatgpt`;
-      
-      console.log(`[CONVERSATION CREATE] Request ID: ${requestIdRef.current}`);
-      console.log(`[CONVERSATION CREATE] Claude ID: ${claudeId}`);
-      console.log(`[CONVERSATION CREATE] Gemini ID: ${geminiId}`);
-      console.log(`[CONVERSATION CREATE] ChatGPT ID: ${chatgptId}`);
       
       return {
         claude: {
@@ -306,7 +576,24 @@ export default function Home() {
       };
     });
 
-    selectedAgents.forEach((agentId) => {
+    const convertImagesToBase64 = async (files: File[]): Promise<string[]> => {
+      const base64Promises = files.map(file => {
+        return new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const result = reader.result as string;
+            resolve(result);
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+      });
+      return Promise.all(base64Promises);
+    };
+
+    const imageBase64s = images ? await convertImagesToBase64(images) : [];
+
+    for (const agentId of selectedAgents) {
       if (abortControllersRef.current[agentId]) {
         abortControllersRef.current[agentId]?.abort();
         abortControllersRef.current[agentId] = null;
@@ -324,6 +611,7 @@ export default function Home() {
           agentId,
           prompt,
           requestId: requestIdRef.current,
+          images: imageBase64s.length > 0 ? imageBase64s : undefined,
         }),
         signal: abortController.signal,
       })
@@ -331,6 +619,8 @@ export default function Home() {
           if (abortController.signal.aborted) {
             return;
           }
+
+          setIsConnected(true);
 
           if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
@@ -406,6 +696,12 @@ export default function Home() {
                 return;
               }
 
+              if (error instanceof TypeError && error.message.includes('fetch')) {
+                setIsConnected(false);
+              } else if (error instanceof Error && (error.message.includes('network') || error.message.includes('Failed to fetch'))) {
+                setIsConnected(false);
+              }
+
               const errorMessage = error instanceof Error 
                 ? error.message 
                 : 'Stream error occurred';
@@ -443,6 +739,12 @@ export default function Home() {
             return;
           }
 
+          if (error instanceof TypeError && error.message.includes('fetch')) {
+            setIsConnected(false);
+          } else if (error instanceof Error && !error.message.includes('Abort')) {
+            setIsConnected(false);
+          }
+
           const errorMessage = error instanceof Error
             ? error.message
             : 'Failed to start stream';
@@ -471,16 +773,26 @@ export default function Home() {
             abortControllersRef.current[agentId] = null;
           }
         });
-    });
+    }
   };
 
   const handleKeepDiff = async (diff: FileDiff) => {
     try {
+      // Normalize file path (remove ./workspace/ prefix if present)
+      let normalizedPath = diff.filePath;
+      if (normalizedPath.startsWith('./workspace/')) {
+        normalizedPath = normalizedPath.replace('./workspace/', '');
+      } else if (normalizedPath.startsWith('workspace/')) {
+        normalizedPath = normalizedPath.replace('workspace/', '');
+      } else if (normalizedPath.startsWith('./')) {
+        normalizedPath = normalizedPath.replace('./', '');
+      }
+
       const response = await fetch('/api/files/apply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          filePath: diff.filePath,
+          filePath: normalizedPath,
           content: diff.newContent,
         }),
       });
@@ -500,6 +812,34 @@ export default function Home() {
             },
           };
         });
+
+        // Refresh FileView if this file is currently selected
+        // Normalize selectedFile for comparison
+        const normalizeForComparison = (path: string) => {
+          let normalized = path;
+          if (normalized.startsWith('./workspace/')) {
+            normalized = normalized.replace('./workspace/', '');
+          } else if (normalized.startsWith('workspace/')) {
+            normalized = normalized.replace('workspace/', '');
+          } else if (normalized.startsWith('./')) {
+            normalized = normalized.replace('./', '');
+          }
+          return normalized;
+        };
+        
+        const normalizedSelected = selectedFile ? normalizeForComparison(selectedFile) : null;
+        const shouldRefresh = normalizedSelected === normalizedPath || normalizedSelected === normalizeForComparison(diff.filePath);
+        
+        if (shouldRefresh) {
+          // Force FileView to reload by incrementing refresh key
+          // Add a small delay to ensure file is written to disk
+          setTimeout(() => {
+            setFileRefreshKey(prev => prev + 1);
+          }, 100);
+        }
+        
+        // Also refresh FileExplorer to show any new files that might have been created
+        // This is handled automatically when files are written, but we ensure it happens
       } else {
         const errorMessage = data.error?.message || 'Unknown error';
         console.error('Failed to apply changes:', errorMessage);
@@ -559,35 +899,104 @@ export default function Home() {
     }
   };
 
-  const totalTokens = Object.values(agentStates).reduce(
-    (acc, state) => acc + state.conversations.reduce(
-      (sum, conv) => sum + conv.actions.reduce((s, a) => s + a.content.length / 4, 0),
-      0
-    ),
-    0
-  );
-  const totalTools = Object.values(agentStates).reduce(
-    (acc, state) => acc + state.conversations.reduce(
-      (sum, conv) => sum + conv.actions.filter(a => a.type === 'tool_call').length,
-      0
-    ),
-    0
-  );
+
+  const handleClearHistory = () => {
+    if (typeof window === 'undefined') return;
+    
+    const emptyState = {
+      claude: { conversations: [], fileDiffs: [], currentStatus: 'idle' as const },
+      gemini: { conversations: [], fileDiffs: [], currentStatus: 'idle' as const },
+      chatgpt: { conversations: [], fileDiffs: [], currentStatus: 'idle' as const },
+    };
+    
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+      setAgentStates(emptyState);
+      agentStatesRef.current = emptyState;
+      console.log('[LOCALSTORAGE] Cleared all chat history');
+    } catch (error) {
+      console.error('[LOCALSTORAGE] Error clearing history:', error);
+    }
+  };
+
+  const handlePause = () => {
+    if (isPaused) {
+      setIsPaused(false);
+      return;
+    }
+
+    setIsPaused(true);
+    setIsLoading(false);
+
+    const agentsToAbort: AgentType[] = [];
+    
+    Object.entries(abortControllersRef.current).forEach(([agentId, controller]) => {
+      if (controller && !controller.signal.aborted) {
+        controller.abort();
+        abortControllersRef.current[agentId as AgentType] = null;
+        agentsToAbort.push(agentId as AgentType);
+      }
+    });
+
+    if (agentsToAbort.length > 0) {
+      setAgentStates(prev => {
+        const updated = { ...prev };
+        
+        agentsToAbort.forEach(agentId => {
+          const agentState = prev[agentId];
+          if (!agentState) return;
+          
+          const updatedConversations = agentState.conversations.map(c => {
+            if (c.status === 'streaming') {
+              return {
+                ...c,
+                status: 'paused' as const,
+                error: 'Paused by user',
+                actions: [...c.actions],
+              };
+            }
+            return { ...c, actions: [...c.actions] };
+          });
+          
+          updated[agentId] = {
+            conversations: updatedConversations,
+            fileDiffs: [...agentState.fileDiffs],
+            currentStatus: 'paused' as const,
+            currentError: 'Paused by user',
+          };
+        });
+        
+        return updated;
+      });
+
+      if (isHydrated) {
+        setTimeout(() => {
+          saveToStorage(agentStatesRef.current);
+        }, 100);
+      }
+
+      console.log('[PAUSE] Aborted requests for agents:', agentsToAbort);
+    } else {
+      console.log('[PAUSE] No active requests to abort');
+    }
+  };
 
   return (
-    <div className="flex flex-col h-screen bg-gray-900 text-white">
+    <div className="flex flex-col h-screen bg-gradient-to-br from-gray-900 via-gray-900 to-gray-950 text-white">
       <StatusBar
         activeAgents={selectedAgents.length}
-        totalTokens={Math.round(totalTokens)}
-        totalTools={totalTools}
-        onPause={() => setIsPaused(!isPaused)}
+        totalTokens={0}
+        totalTools={0}
+        onPause={handlePause}
+        onClear={handleClearHistory}
         isPaused={isPaused}
+        isConnected={isConnected}
       />
 
       <div className="flex flex-1 overflow-hidden">
         <div style={{
           width: `${fileExplorerPercent}%`,
-          minWidth: '150px',
+          minWidth: '200px',
           maxWidth: '30%',
           flexShrink: 0
         }}>
@@ -596,6 +1005,10 @@ export default function Home() {
             onFileSelect={(path) => setSelectedFile(path)}
             onCreateFile={(path) => console.log('File created:', path)}
             onCreateFolder={(path) => console.log('Folder created:', path)}
+            onWorkspaceCleared={() => {
+              setSelectedFile(null);
+              setFileRefreshKey(prev => prev + 1);
+            }}
           />
         </div>
 
@@ -609,13 +1022,13 @@ export default function Home() {
             setFileExplorerPercent(prev => {
               const newPercent = prev + deltaPercent;
               const container = document.querySelector('.flex.flex-1.overflow-hidden') as HTMLElement;
-              const minPercent = container ? (150 / container.clientWidth) * 100 : 5;
+              const minPercent = container ? (200 / container.clientWidth) * 100 : 5;
               const constrained = Math.max(minPercent, Math.min(30, newPercent));
               const adjustment = constrained - newPercent;
               
               setFileViewPercent(prevView => {
                 const newViewPercent = prevView - adjustment;
-                const minViewPercent = container ? (250 / container.clientWidth) * 100 : 15;
+                const minViewPercent = container ? (350 / container.clientWidth) * 100 : 15;
                 return Math.max(minViewPercent, Math.min(50, newViewPercent));
               });
               
@@ -626,11 +1039,11 @@ export default function Home() {
 
         <div style={{
           width: `${fileViewPercent}%`,
-          minWidth: '250px',
+          minWidth: '350px',
           maxWidth: '50%',
           flexShrink: 0
         }}>
-          <FileView filePath={selectedFile} />
+          <FileView key={fileRefreshKey} filePath={selectedFile} refreshKey={fileRefreshKey} />
         </div>
 
         <ResizableDivider
@@ -643,40 +1056,18 @@ export default function Home() {
             setFileViewPercent(prev => {
               const newPercent = prev + deltaPercent;
               const container = document.querySelector('.flex.flex-1.overflow-hidden') as HTMLElement;
-              const minViewPercent = container ? (250 / container.clientWidth) * 100 : 15;
+              const minViewPercent = container ? (350 / container.clientWidth) * 100 : 15;
               const constrained = Math.max(minViewPercent, Math.min(50, newPercent));
-              const adjustment = constrained - newPercent;
-
-              const totalAgentPercent = agentPanel1Percent + agentPanel2Percent + agentPanel3Percent;
-              if (totalAgentPercent > 0) {
-                const minAgentPercent = container ? (200 / container.clientWidth) * 100 : 10;
-                setAgentPanel1Percent(prevPanel => {
-                  const panelAdjustment = (adjustment * prevPanel) / totalAgentPercent;
-                  const newPanelPercent = prevPanel - panelAdjustment;
-                  return Math.max(minAgentPercent, Math.min(35, newPanelPercent));
-                });
-                setAgentPanel2Percent(prevPanel => {
-                  const panelAdjustment = (adjustment * prevPanel) / totalAgentPercent;
-                  const newPanelPercent = prevPanel - panelAdjustment;
-                  return Math.max(minAgentPercent, Math.min(35, newPanelPercent));
-                });
-                setAgentPanel3Percent(prevPanel => {
-                  const panelAdjustment = (adjustment * prevPanel) / totalAgentPercent;
-                  const newPanelPercent = prevPanel - panelAdjustment;
-                  return Math.max(minAgentPercent, Math.min(35, newPanelPercent));
-                });
-              }
-
               return constrained;
             });
           }} 
         />
 
-        <div className="flex overflow-hidden" style={{ flex: 1, minWidth: 0, width: 0 }}>
+        <div className="flex overflow-x-auto" style={{ flex: 1, minWidth: 0 }}>
           <div style={{ 
-            flex: `0 0 ${agentPanel1Percent}%`,
-            minWidth: '200px',
-            maxWidth: '35%',
+            width: `${agentPanel1Width}px`,
+            minWidth: '400px',
+            flexShrink: 0,
             height: '100%'
           }}>
             <AgentPanel
@@ -693,20 +1084,14 @@ export default function Home() {
           
           <ResizableDivider
             onResize={(delta) => {
-              const mainContainer = document.querySelector('.flex.flex-1.overflow-hidden') as HTMLElement;
-              if (!mainContainer) return;
-              const containerWidth = mainContainer.clientWidth;
-              const deltaPercent = (delta / containerWidth) * 100;
-              
-              setAgentPanel1Percent(prev => {
-                const newPercent = prev + deltaPercent;
-                const minAgentPercent = (200 / containerWidth) * 100;
-                const constrained = Math.max(minAgentPercent, Math.min(35, newPercent));
-                const adjustment = constrained - newPercent;
+              setAgentPanel1Width(prev => {
+                const newWidth = prev + delta;
+                const constrained = Math.max(400, Math.min(800, newWidth));
+                const adjustment = constrained - newWidth;
                 
-                setAgentPanel2Percent(prevPanel => {
+                setAgentPanel2Width(prevPanel => {
                   const newPanel2 = prevPanel - adjustment;
-                  return Math.max(minAgentPercent, Math.min(35, newPanel2));
+                  return Math.max(400, Math.min(800, newPanel2));
                 });
                 
                 return constrained;
@@ -715,9 +1100,9 @@ export default function Home() {
           />
           
           <div style={{ 
-            flex: `0 0 ${agentPanel2Percent}%`,
-            minWidth: '200px',
-            maxWidth: '35%',
+            width: `${agentPanel2Width}px`,
+            minWidth: '400px',
+            flexShrink: 0,
             height: '100%'
           }}>
             <AgentPanel
@@ -734,20 +1119,14 @@ export default function Home() {
           
           <ResizableDivider
             onResize={(delta) => {
-              const mainContainer = document.querySelector('.flex.flex-1.overflow-hidden') as HTMLElement;
-              if (!mainContainer) return;
-              const containerWidth = mainContainer.clientWidth;
-              const deltaPercent = (delta / containerWidth) * 100;
-              
-              setAgentPanel2Percent(prev => {
-                const newPercent = prev + deltaPercent;
-                const minAgentPercent = (200 / containerWidth) * 100;
-                const constrained = Math.max(minAgentPercent, Math.min(35, newPercent));
-                const adjustment = constrained - newPercent;
+              setAgentPanel2Width(prev => {
+                const newWidth = prev + delta;
+                const constrained = Math.max(400, Math.min(800, newWidth));
+                const adjustment = constrained - newWidth;
                 
-                setAgentPanel3Percent(prevPanel => {
+                setAgentPanel3Width(prevPanel => {
                   const newPanel3 = prevPanel - adjustment;
-                  return Math.max(minAgentPercent, Math.min(35, newPanel3));
+                  return Math.max(400, Math.min(800, newPanel3));
                 });
                 
                 return constrained;
@@ -756,9 +1135,9 @@ export default function Home() {
           />
           
           <div style={{ 
-            flex: `0 0 ${agentPanel3Percent}%`,
-            minWidth: '200px',
-            maxWidth: '35%',
+            width: `${agentPanel3Width}px`,
+            minWidth: '400px',
+            flexShrink: 0,
             height: '100%'
           }}>
             <AgentPanel
