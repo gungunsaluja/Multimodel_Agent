@@ -8,6 +8,7 @@ import { validateAgentId, validatePrompt, validateRequestId } from '@/lib/valida
 import { logger } from '@/lib/logger';
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+console.log(OPENROUTER_API_KEY,"==================================")
 
 const agentSystemPrompts: Record<AgentType, string> = {
   claude: `[AGENT_ID: CLAUDE] You are Claude, a coding assistant powered by Anthropic's Claude 3.5 Sonnet model.
@@ -294,6 +295,7 @@ async function processAgentRequest(
           },
         ];
 
+        console.log('OPENROUTER_API_KEY:', OPENROUTER_API_KEY);
         const openRouterStream = await callOpenRouter(agentId, messages, OPENROUTER_API_KEY!);
 
         const now = Date.now();

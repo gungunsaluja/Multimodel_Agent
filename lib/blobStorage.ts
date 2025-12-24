@@ -10,9 +10,9 @@ const WORKSPACE_PREFIX = 'workspace/';
  */
 function getBlobToken(): string {
   const token = process.env.BLOB_READ_WRITE_TOKEN;
-  console.log(token)
   if (!token) {
-    throw new Error('BLOB_READ_WRITE_TOKEN environment variable is not set');
+    logger.error('BLOB_READ_WRITE_TOKEN is missing in environment variables');
+    throw new Error('BLOB_READ_WRITE_TOKEN environment variable is not set. Please add it in Vercel Dashboard → Settings → Environment Variables');
   }
   return token;
 }

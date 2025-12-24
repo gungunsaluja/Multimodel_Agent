@@ -213,7 +213,12 @@ export default function BottomInputBar({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    console.log('Send button clicked - Key event:', e);
     if ((prompt.trim() || images.length > 0) && selectedAgents.length > 0) {
+      console.log('Submitting prompt:', prompt);
+      console.log('Selected agents:', selectedAgents);
+      console.log('Images:', images);
+      console.log('File mentions:', selectedFiles);
       onSubmit(prompt, images.length > 0 ? images : undefined);
       setPrompt('');
       setImages([]);
