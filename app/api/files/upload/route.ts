@@ -1,58 +1,23 @@
 import { NextRequest } from 'next/server';
-import { promises as fs, existsSync } from 'fs';
-import { join, resolve, relative, dirname } from 'path';
+import { resolve } from 'path';
 import { CONFIG } from '@/lib/config';
 import { ValidationError, createErrorResponse } from '@/lib/errors';
 import { validateFilePath } from '@/lib/validation';
 import { logger } from '@/lib/logger';
+import { clearWorkspace, writeFile as writeFileToBlob } from '@/lib/blobStorage';
 
 const PROJECT_ROOT = process.cwd();
 const WORKSPACE_ROOT = resolve(PROJECT_ROOT, CONFIG.FILE_SYSTEM.WORKSPACE_ROOT);
 
-if (!existsSync(WORKSPACE_ROOT)) {
-  fs.mkdir(WORKSPACE_ROOT, { recursive: true }).catch((error) => {
-    logger.error('Failed to create workspace directory', error);
-  });
-}
-
 function validateAndResolvePath(filePath: string): string {
   try {
     const validated = validateFilePath(filePath, WORKSPACE_ROOT);
-    return resolve(WORKSPACE_ROOT, validated);
+    return validated;
   } catch (error) {
     if (error instanceof ValidationError) {
       throw error;
     }
     throw new ValidationError('Invalid file path', { originalError: String(error) });
-  }
-}
-
-async function ensureDirectoryExists(dirPath: string): Promise<void> {
-  if (!existsSync(dirPath)) {
-    await fs.mkdir(dirPath, { recursive: true });
-  }
-}
-
-async function clearDirectory(dirPath: string): Promise<void> {
-  if (!existsSync(dirPath)) {
-    return;
-  }
-
-  const entries = await fs.readdir(dirPath, { withFileTypes: true });
-  
-  for (const entry of entries) {
-    const fullPath = resolve(dirPath, entry.name);
-    const relativeEntry = relative(WORKSPACE_ROOT, fullPath);
-    if (relativeEntry.startsWith('..') || relativeEntry.includes('..')) {
-      continue;
-    }
-    
-    if (entry.isDirectory()) {
-      await clearDirectory(fullPath);
-      await fs.rmdir(fullPath);
-    } else {
-      await fs.unlink(fullPath);
-    }
   }
 }
 
@@ -75,24 +40,23 @@ export async function POST(request: NextRequest) {
       normalizedTargetPath = './';
     }
 
-    // Validate and resolve target directory
-    let targetDir: string;
-    try {
-      targetDir = validateAndResolvePath(normalizedTargetPath);
-    } catch (error) {
-      if (normalizedTargetPath === './' || normalizedTargetPath === '') {
-        targetDir = WORKSPACE_ROOT;
-      } else {
-        throw error;
+    // Validate target path
+    if (normalizedTargetPath !== './') {
+      try {
+        validateAndResolvePath(normalizedTargetPath);
+      } catch (error) {
+        if (normalizedTargetPath === './' || normalizedTargetPath === '') {
+          normalizedTargetPath = './';
+        } else {
+          throw error;
+        }
       }
     }
 
-    if (normalizedTargetPath === './' || normalizedTargetPath === '' || targetDir === WORKSPACE_ROOT) {
-      await clearDirectory(WORKSPACE_ROOT);
+    if (normalizedTargetPath === './' || normalizedTargetPath === '') {
+      await clearWorkspace();
       logger.info('Workspace cleared before upload');
     }
-
-    await ensureDirectoryExists(targetDir);
 
     const uploadedFiles: string[] = [];
     const errors: string[] = [];
@@ -115,20 +79,18 @@ export async function POST(request: NextRequest) {
           ? relativeFilePath 
           : `${normalizedTargetPath}/${relativeFilePath}`.replace(/^\.\//, '');
 
-        const fullPath = validateAndResolvePath(filePath);
+        validateAndResolvePath(filePath);
 
         if (file.size > CONFIG.FILE_SYSTEM.MAX_FILE_SIZE) {
           errors.push(`${file.name}: File too large (max ${CONFIG.FILE_SYSTEM.MAX_FILE_SIZE} bytes)`);
           continue;
         }
 
-        const parentDir = dirname(fullPath);
-        await ensureDirectoryExists(parentDir);
-
         const arrayBuffer = await file.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
+        const content = buffer.toString('utf-8');
 
-        await fs.writeFile(fullPath, buffer);
+        await writeFileToBlob(filePath, content);
         
         uploadedFiles.push(filePath);
         logger.info('File uploaded', { path: filePath, size: file.size });

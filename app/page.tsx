@@ -47,6 +47,7 @@ export default function Home() {
 
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
+      
       if (stored) {
         const parsed = JSON.parse(stored);
         

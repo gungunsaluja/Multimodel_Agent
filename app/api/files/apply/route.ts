@@ -1,18 +1,21 @@
 import { NextRequest } from 'next/server';
-import { promises as fs, existsSync } from 'fs';
-import { resolve, dirname } from 'path';
 import { CONFIG } from '@/lib/config';
 import { ValidationError, createErrorResponse } from '@/lib/errors';
 import { validateFilePath, sanitizeFileContent } from '@/lib/validation';
 import { logger } from '@/lib/logger';
+import { writeFile as writeFileToBlob, deleteFile as deleteFileFromBlob, fileExists } from '@/lib/blobStorage';
+import { resolve } from 'path';
 
 const PROJECT_ROOT = process.cwd();
 const WORKSPACE_ROOT = resolve(PROJECT_ROOT, CONFIG.FILE_SYSTEM.WORKSPACE_ROOT);
 
+/**
+ * Validate file path and prevent path traversal attacks
+ */
 function validateAndResolvePath(filePath: string): string {
   try {
     const validated = validateFilePath(filePath, WORKSPACE_ROOT);
-    return resolve(WORKSPACE_ROOT, validated);
+    return validated; // Return validated path, not full path
   } catch (error) {
     if (error instanceof ValidationError) {
       throw error;
@@ -21,6 +24,9 @@ function validateAndResolvePath(filePath: string): string {
   }
 }
 
+/**
+ * Apply file changes (Keep button)
+ */
 export async function POST(request: NextRequest) {
   try {
     let body: unknown;
@@ -43,6 +49,8 @@ export async function POST(request: NextRequest) {
     }
 
     let filePath: string = filePathRaw;
+
+    // Normalize file path - remove ./workspace/ prefix if present
     if (filePath.startsWith('./workspace/')) {
       filePath = filePath.replace('./workspace/', '');
     } else if (filePath.startsWith('workspace/')) {
@@ -51,23 +59,22 @@ export async function POST(request: NextRequest) {
       filePath = filePath.replace('./', '');
     }
 
-    const fullPath = validateAndResolvePath(filePath);
+    // Validate path
+    validateAndResolvePath(filePath);
     
     logger.info('Applying file changes', { 
       originalPath: requestBody.filePath, 
-      normalizedPath: filePath, 
-      fullPath,
+      normalizedPath: filePath,
       contentLength: content ? String(content).length : 0 
     });
 
-    const parentDir = dirname(fullPath);
-    await fs.mkdir(parentDir, { recursive: true });
-
+    // Sanitize and validate content
     const sanitizedContent = content 
       ? sanitizeFileContent(String(content))
       : '';
 
-    await fs.writeFile(fullPath, sanitizedContent, 'utf-8');
+    // Write the file to blob storage
+    await writeFileToBlob(filePath, sanitizedContent);
 
     logger.info('File changes applied', { filePath, size: sanitizedContent.length });
 
@@ -95,6 +102,9 @@ export async function POST(request: NextRequest) {
   }
 }
 
+/**
+ * Reject file changes (Undo button) - restore old content
+ */
 export async function PUT(request: NextRequest) {
   try {
     let body: unknown;
@@ -109,19 +119,21 @@ export async function PUT(request: NextRequest) {
     }
 
     const requestBody = body as Record<string, unknown>;
-    const filePathRaw = requestBody.filePath;
+    const filePath = requestBody.filePath;
     const oldContent = requestBody.oldContent;
 
-    if (!filePathRaw || typeof filePathRaw !== 'string') {
+    if (!filePath || typeof filePath !== 'string') {
       throw new ValidationError('File path is required and must be a string');
     }
 
-    const filePath: string = filePathRaw;
-    const fullPath = validateAndResolvePath(filePath);
+    // Validate path
+    validateAndResolvePath(filePath);
 
+    // If oldContent is empty and file exists, delete it
     if (!oldContent || (typeof oldContent === 'string' && oldContent.trim() === '')) {
-      if (existsSync(fullPath)) {
-        await fs.unlink(fullPath);
+      const exists = await fileExists(filePath);
+      if (exists) {
+        await deleteFileFromBlob(filePath);
         logger.info('File deleted', { filePath });
       }
       return new Response(
@@ -130,13 +142,13 @@ export async function PUT(request: NextRequest) {
       );
     }
 
+    // Sanitize and validate old content
     const sanitizedContent = oldContent 
       ? sanitizeFileContent(String(oldContent))
       : '';
 
-    const parentDir = dirname(fullPath);
-    await fs.mkdir(parentDir, { recursive: true });
-    await fs.writeFile(fullPath, sanitizedContent, 'utf-8');
+    // Restore old content to blob storage
+    await writeFileToBlob(filePath, sanitizedContent);
 
     logger.info('File changes reverted', { filePath, size: sanitizedContent.length });
 
@@ -163,4 +175,5 @@ export async function PUT(request: NextRequest) {
     );
   }
 }
+
 

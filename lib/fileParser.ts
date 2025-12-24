@@ -1,10 +1,10 @@
 import { AgentType } from './types';
-import { promises as fs } from 'fs';
-import { resolve, dirname } from 'path';
+import { resolve } from 'path';
 import { CONFIG } from './config';
 import { validateFilePath, sanitizeFileContent } from './validation';
 import { logger } from './logger';
 import { ValidationError } from './errors';
+import { readFile as readFileFromBlob, writeFile as writeFileToBlob } from './blobStorage';
 
 const WORKSPACE_ROOT = resolve(process.cwd(), CONFIG.FILE_SYSTEM.WORKSPACE_ROOT);
 
@@ -15,14 +15,12 @@ export interface ParsedFileOperation {
   oldContent?: string;
 }
 
-
 export function parseFileOperations(
   content: string,
   agentId: AgentType
 ): ParsedFileOperation[] {
   const operations: ParsedFileOperation[] = [];
 
- 
   const codeBlockPattern = /```(?:\w+)?:?([^\n]+)?\n([\s\S]*?)```/g;
   let match;
 
@@ -30,7 +28,7 @@ export function parseFileOperations(
     const filePathHint = match[1]?.trim();
     const codeContent = match[2];
 
-      if (filePathHint && codeContent) {
+    if (filePathHint && codeContent) {
       const filePath = filePathHint
         .replace(/^\/\/\s*/, '')
         .replace(/^file:\s*/, '')
@@ -82,26 +80,22 @@ export function parseFileOperations(
 
 function normalizePath(filePath: string): string {
   let normalized = filePath.replace(/^\.\//, '').replace(/^workspace\//, '');
+  
   if (!normalized.startsWith('./')) {
     normalized = './' + normalized;
   }
+  
   return normalized;
 }
 
 export async function getFileContent(filePath: string): Promise<string | null> {
   try {
-    const validated = validateFilePath(filePath, WORKSPACE_ROOT);
-    const fullPath = resolve(WORKSPACE_ROOT, validated);
-    const stats = await fs.stat(fullPath);
-    if (stats.size > CONFIG.FILE_SYSTEM.MAX_FILE_SIZE) {
-      logger.warn('File too large to read', { filePath, size: stats.size });
-      return null;
-    }
-
-    const content = await fs.readFile(fullPath, 'utf-8');
+    validateFilePath(filePath, WORKSPACE_ROOT);
+    const content = await readFileFromBlob(filePath);
     return content;
   } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+    if (error instanceof ValidationError) {
+      logger.warn('Validation error reading file', { filePath, error });
       return null;
     }
     logger.warn('Error reading file', { filePath, error });
@@ -111,12 +105,9 @@ export async function getFileContent(filePath: string): Promise<string | null> {
 
 export async function writeFile(filePath: string, content: string): Promise<{ success: boolean; message: string }> {
   try {
-    const validated = validateFilePath(filePath, WORKSPACE_ROOT);
-    const fullPath = resolve(WORKSPACE_ROOT, validated);
-    const parentDir = dirname(fullPath);
-    await fs.mkdir(parentDir, { recursive: true });
+    validateFilePath(filePath, WORKSPACE_ROOT);
     const sanitizedContent = sanitizeFileContent(content);
-    await fs.writeFile(fullPath, sanitizedContent, 'utf-8');
+    await writeFileToBlob(filePath, sanitizedContent);
     
     logger.info('File written', { filePath, size: sanitizedContent.length });
     
@@ -130,4 +121,3 @@ export async function writeFile(filePath: string, content: string): Promise<{ su
     throw new Error(`Failed to write file: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
-

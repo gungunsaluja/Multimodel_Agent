@@ -1,18 +1,21 @@
 import { NextRequest } from 'next/server';
-import { promises as fs } from 'fs';
-import { resolve } from 'path';
 import { CONFIG } from '@/lib/config';
 import { ValidationError, NotFoundError, createErrorResponse } from '@/lib/errors';
 import { validateFilePath } from '@/lib/validation';
 import { logger } from '@/lib/logger';
+import { readFile as readFileFromBlob, fileExists } from '@/lib/blobStorage';
+import { resolve } from 'path';
 
 const PROJECT_ROOT = process.cwd();
 const WORKSPACE_ROOT = resolve(PROJECT_ROOT, CONFIG.FILE_SYSTEM.WORKSPACE_ROOT);
 
+/**
+ * Validate file path and prevent path traversal attacks
+ */
 function validateAndResolvePath(filePath: string): string {
   try {
     const validated = validateFilePath(filePath, WORKSPACE_ROOT);
-    return resolve(WORKSPACE_ROOT, validated);
+    return validated; // Return validated path, not full path
   } catch (error) {
     if (error instanceof ValidationError) {
       throw error;
@@ -30,27 +33,29 @@ export async function GET(request: NextRequest) {
       throw new ValidationError('Path is required');
     }
 
-    const fullPath = validateAndResolvePath(path);
+    // Validate path
+    validateAndResolvePath(path);
 
-    let stats;
-    try {
-      stats = await fs.stat(fullPath);
-    } catch {
+    // Check if file exists
+    const exists = await fileExists(path);
+    if (!exists) {
       throw new NotFoundError('File');
     }
 
-    if (stats.isDirectory()) {
-      throw new ValidationError('Path is a directory, not a file');
+    // Read file content from blob storage
+    const content = await readFileFromBlob(path);
+
+    if (!content) {
+      throw new NotFoundError('File');
     }
 
-    if (stats.size > CONFIG.FILE_SYSTEM.MAX_FILE_SIZE) {
+    // Check file size
+    if (content.length > CONFIG.FILE_SYSTEM.MAX_FILE_SIZE) {
       throw new ValidationError(
         `File too large. Maximum size is ${CONFIG.FILE_SYSTEM.MAX_FILE_SIZE} bytes`,
-        { size: stats.size, maxSize: CONFIG.FILE_SYSTEM.MAX_FILE_SIZE }
+        { size: content.length, maxSize: CONFIG.FILE_SYSTEM.MAX_FILE_SIZE }
       );
     }
-
-    const content = await fs.readFile(fullPath, 'utf-8');
 
     logger.info('File read', { path, size: content.length });
 
@@ -77,4 +82,5 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+
 
